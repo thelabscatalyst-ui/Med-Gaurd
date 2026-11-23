@@ -1,0 +1,35 @@
+medguard-ai/
+├── ARCHITECTURE.md              # Your system design doc (for Claude Code / reviewers)
+├── .env                         # DATABASE_URL, CLINICOS_READONLY_URL, GEMINI_API_KEY
+├── .env.example                 # Template committed to Git
+├── requirements.txt
+├── Dockerfile
+├── app/
+│   ├── __init__.py
+│   ├── main.py                  # FastAPI entrypoint (/v1/query, /v1/ingest, /v1/metrics)
+│   ├── config.py                # Pydantic settings, model names, token pricing
+│   ├── middleware/
+│   │   └── pii.py               # Regex/entity PII scrubber for incoming prompts
+│   ├── db/
+│   │   ├── database.py          # Asyncpg / psycopg3 connection pool
+│   │   └── models.sql           # DDL for anonymized ClinicOS tables, doc_chunks, llm_traces
+│   ├── ingestion/
+│   │   ├── chunker.py           # Structure-aware PDF/Markdown splitter + metadata
+│   │   └── pipeline.py          # Embeddings + upsert into Postgres pgvector
+│   ├── agents/
+│   │   ├── state.py             # LangGraph TypedDict shared state
+│   │   ├── router.py            # Classifies query -> SQL | RAG | HYBRID
+│   │   ├── sql_agent.py         # Schema-aware read-only SQL generator + AST/regex guard
+│   │   ├── rag_agent.py         # Hybrid search (pgvector + tsvector) + RRF + reranker
+│   │   ├── synthesizer.py       # Drafts cited answer from SQL rows + doc chunks
+│   │   ├── grader.py            # Self-reflection hallucination check + retry/refusal
+│   │   └── graph.py             # Compiles the LangGraph StateGraph
+│   └── observability/
+│       └── tracker.py           # Logs latency, tokens/sec, cost_usd to llm_traces
+├── scripts/
+│   └── sync_clinicos.py         # Pulls & anonymizes live ClinicOS data -> Neon Postgres
+├── data/
+│   └── docs/                    # Public healthcare PDFs (ABDM, IRDAI, clinical SOPs)
+└── eval/
+    ├── golden_set.json          # 25 test queries + expected facts/clauses
+    └── run_eval.py              # Automated LLM-as-a-judge eval runner & report
