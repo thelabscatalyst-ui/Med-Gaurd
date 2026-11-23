@@ -4,6 +4,8 @@ Operations and compliance copilot for clinics on ClinicOS: hybrid RAG + multi-ag
 (LangGraph) over each clinic's live records and Indian healthcare regulations, with
 per-clinic isolation, citations and LLM-native observability. Built on Google Cloud.
 
+> What it is and isn't: [docs/POSITIONING.md](docs/POSITIONING.md).
+>
 > Status: **M0 — skeleton.** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
 > design and [docs/PROPOSAL.md](docs/PROPOSAL.md) for the problem it solves.
 

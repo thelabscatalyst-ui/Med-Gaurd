@@ -10,20 +10,31 @@ answers plain-language questions from the clinic's own live records (synced from
 ClinicOS), from regulatory documents, or from both, with citations and strict per-
 clinic isolation. It never gives clinical advice.
 
+**Positioning (decided 2026-11-23):** independent and multi-doctor clinics in India, the
+segment ClinicOS is built for. Not hospitals: ClinicOS has no admissions, departments or
+insurance claims, so a hospital pitch would promise answers with no data behind them.
+ClinicOS has no multi-branch chains either. The enterprise customer is the **ClinicOS
+platform** (many clinic tenants), and the clinics are its tenants. Hospitals are a stated
+future extension, not a claim.
+
 - **Owner:** Meher. Claude works as the junior engineer: one module at a time, each
   explained (what it does, why, what alternatives were considered), and Meher signs
   off before the next module starts. Never generate the whole codebase in one go.
-- **Goal:** enterprise quality over speed. There is no fixed deadline.
+- **Goal:** enterprise quality. **Target: core v1 (M0–M11) deployed with real eval numbers by
+  ~2026-12-03.** M12–M16 (20-clinic simulator, full ~120–230-doc corpus, load/chaos, scorecard) follow.
+  Resume claims cover only what is actually done and measured.
 - **GitHub:** `origin` = github.com/thelabscatalyst-ui/Med-Gaurd. The folder and repo are
   spelled "Gaurd"; the product is "MedGuard". Leave the folder name alone.
 
 ## Source-of-truth docs (read in this order)
 1. `docs/ARCHITECTURE.md`: **the current design (v2)**, built against the real ClinicOS
    code. If code and this doc disagree, fix one of them in the same change.
-2. `docs/PROPOSAL.md`: the discovery brief and solution proposal (FDE-style).
-3. `docs/INTEGRATION_CONTRACT.md`: *(to be written in M2)* the exact ClinicOS ↔
+2. `docs/POSITIONING.md`: one page on what MedGuard is and isn't. Keep every claim
+   consistent with it.
+3. `docs/PROPOSAL.md`: the discovery brief and solution proposal (FDE-style).
+4. `docs/INTEGRATION_CONTRACT.md`: *(to be written in M2)* the exact ClinicOS ↔
    MedGuard contract.
-4. `Medguard Architecture.md` and `Project Structure.txt`: the original Gemini
+5. `Medguard Architecture.md` and `Project Structure.txt`: the original Gemini
    blueprint. **Superseded and kept for history only.** It assumed a hospital system
    (departments, pre-auth, admissions) that ClinicOS doesn't have.
 
@@ -83,8 +94,8 @@ D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building)
 - **ACCEPTED D11. Split chunk storage for scale:** `global_chunks` (HNSW +
   iterative scan) and `tenant_chunks` (exact search, no vector index), stored as
   `halfvec(768)` with `embedding_model` recorded. See ARCHITECTURE §7.4.
-- **ACCEPTED D12. Enterprise readiness is measured, not claimed:** 1,000+ docs, 20
-  simulated clinics, load and chaos tests, a 6-level question ladder, and a published
+- **ACCEPTED D12. Enterprise readiness is measured, not claimed:** ~120–230 official docs
+  (~8k–15k pages; 25–40 by Dec 3), 20 simulated clinics, load and chaos tests, a 6-level question ladder, and a published
   scorecard. See ARCHITECTURE §14.
 
 ## Build log (see ARCHITECTURE.md §12 for "done when")

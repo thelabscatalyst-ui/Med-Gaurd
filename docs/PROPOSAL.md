@@ -24,7 +24,8 @@ them, cites every claim, and never shows a clinic anything outside its own data.
 
 | | |
 |---|---|
-| **Customer** | Independent doctors and small multi-doctor clinics (outpatient, Tier-2/3 India) on ClinicOS |
+| **Customer** | The ClinicOS platform and its tenants: independent doctors and multi-doctor clinics (outpatient, Tier-2/3 India) |
+| **Not the target (yet)** | Hospitals and clinic chains. ClinicOS has no inpatient, claims or branch data, so MedGuard won't promise answers it has no data for |
 | **Users** | Clinic owner (doctor), associate doctors, receptionist |
 | **Existing system** | ClinicOS: FastAPI + Postgres on Railway, multi-tenant, role- and PIN-gated |
 | **Data available** | Appointments, visits/queue, bills + line items, prescriptions + drugs, expenses, patient feedback |

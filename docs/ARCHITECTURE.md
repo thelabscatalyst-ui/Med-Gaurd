@@ -267,7 +267,7 @@ Dense (vector, top 20) and sparse (tsvector, top 20) search, fused with Reciproc
 Rank Fusion (k = 60), optionally reranked. The top 4–6 chunks go to the synthesizer.
 **Every tuning knob is justified by an eval number, not by taste.**
 
-### 7.4 Storage layout for scale (~100k+ chunks)
+### 7.4 Storage layout for scale (target ~25k–50k chunks, designed for 10× that)
 
 **The filtering trap:** HNSW fetches its ~40 nearest candidates first and applies
 `WHERE` filters afterwards. A filter that matches 1% of the corpus (one clinic's
@@ -419,7 +419,7 @@ grows alongside.
 | M10 | ClinicOS C2–C5: token endpoint, JWKS, panel, CSP | Ask from inside ClinicOS, get an answer |
 | M11 | GCP deploy + CI eval gate | Live URL, eval badge in README |
 | M12 | Clinic simulator: 20 clinic profiles driving ClinicOS's real HTTP flows | 20 tenants with realistic, varied history |
-| M13 | Corpus scale-up to 1,000+ docs (OCR, tables, versions, state rules, clinic-private) | Recall@5 curve at 1k / 10k / 100k chunks |
+| M13 | Corpus scale-up to ~120–230 docs (OCR, tables, amendments, 3–5 states) | Recall@5 curve as the corpus grows (v1 → full) |
 | M14 | Load, soak, spike and chaos tests | SLOs met at 20 concurrent clinics |
 | M15 | Enterprise readiness scorecard in README (§14) | All gates reported, including misses |
 | M16+ | CDC, DLP, standalone console, inspection-readiness agent, patient vault | Hardening and product depth |
@@ -443,7 +443,7 @@ grows alongside.
 
 | Pillar | Target | How |
 |---|---|---|
-| **Corpus scale** | 1,000+ documents, ~50k pages, 100k+ chunks | Central and state regulations, NPPA/NLEM/CGHS/PM-JAY price tables, insurance wordings, clinic-private docs. PDFs live in a private GCS bucket; the repo holds a manifest (URL, hash, version) |
+| **Corpus scale** | v1 (Dec 3): 25–40 core docs, ~2.5k–4k pages. Full: ~120–230 docs, ~8k–15k pages, ~25k–50k chunks | Official sources only (India Code, e-Gazette, CDSCO, NPPA, CPCB, MeitY, NMC, IRDAI, clinicalestablishments.gov.in): clinic registration and minimum standards, drug rules and schedules, NPPA/NLEM price tables, DPDP, waste, PCPNDT/MTP, infection control, GST/consumer law, IRDAI + retail policy wordings, 3–5 states. Collected via `corpus/manifest.yaml` + a collector script. PDFs live in a private GCS bucket; the repo holds only the manifest (URL, hash, version) |
 | **Tenant scale** | 20 live clinics | Clinic simulator (M12): GP, pediatric, dental and ortho; 1–4 doctors; Tier-2/3; several states; realistic rhythms (Monday rush, seasonal spikes, no-shows, partial payments). It drives ClinicOS's HTTP interface only and avoids email-sending flows (Resend quota) |
 | **Load** | SLOs at 20 concurrent clinics | Locust or k6: baseline, ramp, spike, 1-hour soak. A stub LLM for infrastructure tests, the real LLM for quota tests. Expected failures: Vertex 429s, Cloud SQL connection limits, cold starts, noisy neighbours, sync lag |
 | **Resilience** | Graceful degradation | Chaos runs: DB down, slow LLM, stale sync. The system answers partially or refuses cleanly, never with a 500 |
