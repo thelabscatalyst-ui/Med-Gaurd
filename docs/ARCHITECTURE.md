@@ -208,7 +208,7 @@ patient data**, so going live never requires a redesign.
 |---|---|---|
 | `ops` | Synced, pseudonymized ClinicOS tables: patients, appointments, visits, bills, bill_items, prescriptions, prescription_items, expenses, feedback (rating only), clinics, doctors (id, specialization), `sync_runs` | Sync job writes; nobody else reads raw |
 | `semantic` | Curated, documented **views** for the SQL agent: `v_appointments`, `v_visits` (with wait-time minutes), `v_bills` (with outstanding = total − paid), `v_prescription_drugs`, `v_expenses`, `v_daily_summary` | SQL agent (role `agent_ro`) |
-| `knowledge` | `documents`, `doc_chunks` (pgvector + tsvector), corpus versions | Retriever |
+| `knowledge` | `documents`, `global_chunks` + `tenant_chunks` (halfvec + tsvector, see §7.4), corpus versions | Retriever |
 | `identity_vault` | pseudonym → encrypted name/phone | Re-identification step only |
 | `telemetry` | `llm_traces`, `node_spans` | Metrics endpoint, dashboards |
 | `audit` | Append-only: who asked what, which views, row counts, answer hash | Compliance, debugging |
@@ -263,10 +263,28 @@ PDF ─► parse (layout-aware: headings, tables, page numbers)
 
 ### 7.3 Retrieval
 
-Dense (pgvector HNSW, top 20) and sparse (tsvector, top 20), both filtered by tenant
-and `superseded = false`. They are fused with Reciprocal Rank Fusion (k = 60),
-optionally reranked, and the top 4–6 chunks go to the synthesizer. **Every tuning
-knob is justified by an eval number, not by taste.**
+Dense (vector, top 20) and sparse (tsvector, top 20) search, fused with Reciprocal
+Rank Fusion (k = 60), optionally reranked. The top 4–6 chunks go to the synthesizer.
+**Every tuning knob is justified by an eval number, not by taste.**
+
+### 7.4 Storage layout for scale (~100k+ chunks)
+
+**The filtering trap:** HNSW fetches its ~40 nearest candidates first and applies
+`WHERE` filters afterwards. A filter that matches 1% of the corpus (one clinic's
+private documents) can therefore return **zero rows** even though matches exist.
+
+| Table | Contents | Vector index | Why |
+|---|---|---|---|
+| `knowledge.global_chunks` | Regulatory, pricing and insurance corpus (~95% of chunks) | HNSW with **iterative scan** (pgvector ≥ 0.8) for state and version filters | Large; filters are broad (state, `superseded`) |
+| `knowledge.tenant_chunks` | Clinic-private documents, a few thousand per clinic | **None**: exact search behind a B-tree index on `clinic_id` + RLS | Small per tenant; exact search takes milliseconds and never misses |
+
+- Vectors are stored as `halfvec(768)` (16-bit), which halves memory with negligible
+  quality loss. The HNSW index must fit in RAM; size the Cloud SQL instance for that
+  and scale it up only for benchmark windows.
+- Each chunk stores `embedding_model`, so a model change means re-embedding into a
+  new column, never mixing two embedding spaces.
+- Hard metadata filters: the clinic's **state** (near-identical state rules are the
+  #1 way to retrieve the wrong clause), `superseded = false` and corpus type.
 
 ---
 
@@ -388,7 +406,7 @@ grows alongside.
 
 | # | Module | Done when |
 |---|---|---|
-| M0 | Repo skeleton, config, Docker, local Postgres + pgvector, `/health` | `docker compose up` → health 200 |
+| M0 | Repo skeleton, config, Docker, local Postgres + pgvector, `/health/live` + `/health/ready` | `docker compose up` → both 200; ready turns 503 when the DB is down |
 | M1 | MedGuard schemas + RLS + roles | RLS test: two tenants, zero cross-reads |
 | M2 | Integration contract doc + ClinicOS C1 (read-only role) | `medguard_reader` can SELECT, cannot INSERT |
 | M3 | `clinicos-sync`: contract test, extract, pseudonymize, hash-diff load | Synced row counts match ClinicOS; edit in ClinicOS shows up within 5 min |
@@ -400,7 +418,11 @@ grows alongside.
 | M9 | FastAPI: auth (JWKS), `/v1/query` (SSE), tracing, metrics, audit | Token from a fake issuer → 200; tampered → 401 |
 | M10 | ClinicOS C2–C5: token endpoint, JWKS, panel, CSP | Ask from inside ClinicOS, get an answer |
 | M11 | GCP deploy + CI eval gate | Live URL, eval badge in README |
-| M12+ | Clinic-private docs, CDC, DLP, console, patient vault | Enterprise hardening |
+| M12 | Clinic simulator: 20 clinic profiles driving ClinicOS's real HTTP flows | 20 tenants with realistic, varied history |
+| M13 | Corpus scale-up to 1,000+ docs (OCR, tables, versions, state rules, clinic-private) | Recall@5 curve at 1k / 10k / 100k chunks |
+| M14 | Load, soak, spike and chaos tests | SLOs met at 20 concurrent clinics |
+| M15 | Enterprise readiness scorecard in README (§14) | All gates reported, including misses |
+| M16+ | CDC, DLP, standalone console, inspection-readiness agent, patient vault | Hardening and product depth |
 
 ---
 
@@ -411,3 +433,23 @@ grows alongside.
 - [ ] Cloud SQL smallest-tier monthly cost vs remaining GCP credits
 - [ ] Official sources and current versions for each regulatory document
 - [ ] Whether ClinicOS associates should ever see clinic-wide aggregates (today: no)
+- [ ] Which pgvector version Cloud SQL ships (iterative scan needs ≥ 0.8)
+
+---
+
+## 14. Enterprise readiness: how we prove it
+
+"Enterprise" is shown by measured behaviour at realistic scale, not by asserting it.
+
+| Pillar | Target | How |
+|---|---|---|
+| **Corpus scale** | 1,000+ documents, ~50k pages, 100k+ chunks | Central and state regulations, NPPA/NLEM/CGHS/PM-JAY price tables, insurance wordings, clinic-private docs. PDFs live in a private GCS bucket; the repo holds a manifest (URL, hash, version) |
+| **Tenant scale** | 20 live clinics | Clinic simulator (M12): GP, pediatric, dental and ortho; 1–4 doctors; Tier-2/3; several states; realistic rhythms (Monday rush, seasonal spikes, no-shows, partial payments). It drives ClinicOS's HTTP interface only and avoids email-sending flows (Resend quota) |
+| **Load** | SLOs at 20 concurrent clinics | Locust or k6: baseline, ramp, spike, 1-hour soak. A stub LLM for infrastructure tests, the real LLM for quota tests. Expected failures: Vertex 429s, Cloud SQL connection limits, cold starts, noisy neighbours, sync lag |
+| **Resilience** | Graceful degradation | Chaos runs: DB down, slow LLM, stale sync. The system answers partially or refuses cleanly, never with a 500 |
+| **Question difficulty** | Per-level scores | L1 lookup · L2 time and compare · L3 multi-step records · L4 multi-step and versioned policy · L5 hybrid · L6 vague, adversarial or out of scope. Personas: owner, associate, receptionist, accountant, inspector, multi-clinic owner. Includes Hinglish and relative-time phrasing |
+| **Golden set** | ~100 human-verified gold + ~400 silver | Records: ground truth from reference SQL, then paraphrased. Policy: multi-document synthetic Q&A, with Meher verifying the gold subset. Every tester failure is promoted into the set |
+| **Safety** | 0 leaks across all 380 clinic pairs | Automated in CI |
+| **Operations** | Dashboards, alerts, runbook, cost per clinic per month | Cloud Monitoring + `/v1/metrics` |
+
+Targets are set after the first baseline and published, misses included.

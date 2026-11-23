@@ -53,36 +53,44 @@ clinic isolation. It never gives clinical advice.
 
 ## Decisions
 **ACCEPTED** = Meher agreed. **PROPOSED** = awaiting Meher's review.
+D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building).
 - **ACCEPTED D1. Live ClinicOS data, not a toy dataset.** Source = ClinicOS production
   (tester-entered). Built as if it were real PHI. Resume and README describe it
   honestly as pilot accounts with realistic test data.
 - **ACCEPTED D2. ClinicOS and MedGuard stay separate projects.** They meet only at a
   thin contract: a read-only DB role, short-lived signed tokens with JWKS, and an
   embedded panel plus a CSP line.
-- **PROPOSED D3. Identity:** ClinicOS mints 5-minute Ed25519 JWTs (`aud=medguard`), and
+- **ACCEPTED D3. Identity:** ClinicOS mints 5-minute Ed25519 JWTs (`aud=medguard`), and
   MedGuard verifies them with the public key. ClinicOS's HS256 `SECRET_KEY` is never
   shared.
-- **PROPOSED D4. Data:** a scheduled sync (Cloud Run Job every 5 min, snapshot + hash
+- **ACCEPTED D4. Data:** a scheduled sync (Cloud Run Job every 5 min, snapshot + hash
   diff) into MedGuard's own Postgres. The agent never queries ClinicOS production. CDC
   is the v2 path.
-- **PROPOSED D5. Tenant isolation through Postgres RLS**, which mirrors ClinicOS's
+- **ACCEPTED D5. Tenant isolation through Postgres RLS**, which mirrors ClinicOS's
   scoping, plus scopes (`ops:read`, `finance:read` only with a PIN, `clinic:admin` for
   owners).
-- **PROPOSED D6. Pseudonymize at sync, re-identify after the answer.** The LLM never
+- **ACCEPTED D6. Pseudonymize at sync, re-identify after the answer.** The LLM never
   sees names or phones. Free-text notes are not synced in v1.
-- **PROPOSED D7. Four-layer SQL guard:** sqlglot AST → read-only transaction with a
+- **ACCEPTED D7. Four-layer SQL guard:** sqlglot AST → read-only transaction with a
   timeout → `agent_ro` role on `semantic` views → RLS.
-- **PROPOSED D8. GCP-native:** Cloud Run, Cloud SQL + pgvector, Vertex AI in
+- **ACCEPTED D8. GCP-native:** Cloud Run, Cloud SQL + pgvector, Vertex AI in
   `asia-south1`, Secret Manager, Cloud Trace. Model IDs come from config and are
   verified at build time. `text-embedding-004` is shut down.
-- **PROPOSED D9. Scope = operational and compliance Q&A only.** Clinical advice is
+- **ACCEPTED D9. Scope = operational and compliance Q&A only.** Clinical advice is
   refused (avoids medical-device territory).
-- **PROPOSED D10. Eval-driven:** the golden set includes tenant-leakage and
+- **ACCEPTED D10. Eval-driven:** the golden set includes tenant-leakage and
   adversarial cases; CI gates on thresholds.
+- **ACCEPTED D11. Split chunk storage for scale:** `global_chunks` (HNSW +
+  iterative scan) and `tenant_chunks` (exact search, no vector index), stored as
+  `halfvec(768)` with `embedding_model` recorded. See ARCHITECTURE §7.4.
+- **ACCEPTED D12. Enterprise readiness is measured, not claimed:** 1,000+ docs, 20
+  simulated clinics, load and chaos tests, a 6-level question ladder, and a published
+  scorecard. See ARCHITECTURE §14.
 
 ## Build log (see ARCHITECTURE.md §12 for "done when")
-- [ ] M0 Skeleton, config, Docker, local Postgres + pgvector, `/health`
-- [ ] M1 MedGuard schemas + RLS + roles
+- [x] M0 Skeleton, config, Docker, local Postgres + pgvector, `/health/live` + `/health/ready`
+      (2026-11-23, awaiting Meher's review; see FAILURES.md for the pool-recovery bug)
+- [ ] M1 MedGuard schemas + RLS + roles (decide the migration tool here)
 - [ ] M2 Integration contract doc + ClinicOS read-only role
 - [ ] M3 `clinicos-sync` (contract test, pseudonymize, hash-diff)
 - [ ] M4 Semantic views
@@ -93,6 +101,25 @@ clinic isolation. It never gives clinical advice.
 - [ ] M9 FastAPI: JWKS auth, SSE query, tracing, metrics, audit
 - [ ] M10 ClinicOS side: token endpoint, JWKS, panel, CSP
 - [ ] M11 GCP deploy + CI eval gate
+- [ ] M12–M16 Simulator, corpus scale-up, load/chaos, scorecard (ARCHITECTURE §12, §14)
+
+## Code map and commands
+- `app/main.py`: `create_app()` + lifespan (opens and closes the DB pool)
+- `app/config.py`: the only place env vars are read (pydantic-settings). No `@property`.
+- `app/db/pool.py`: psycopg 3 async pool with a custom `check` (purge-all-on-first-dead)
+- `app/api/health.py`: `/health/live` (no deps) and `/health/ready` (DB + pgvector, 503 when down)
+- `tests/`: unit tests need no Docker; `-m integration` needs `docker compose up -d db`
+- `infra/db/init/`: local-only Docker init SQL. Migrations take over in M1.
+```bash
+uv sync                                  # Python 3.12 venv from uv.lock
+uv run pytest && uv run pytest -m integration
+uv run ruff check . && uv run ruff format --check .
+docker compose up -d --build             # db on :5433, api on :8080
+```
+- Local DB is on host port **5433**, not 5432. Image pinned to `pgvector/pgvector:0.8.0-pg16`.
+- Dependencies are added with `uv add` only, and only well-known packages. Don't add a
+  package just because a warning suggests it. (Starlette's TestClient warns "install
+  httpx2"; we kept `httpx` because the suggested name couldn't be verified.)
 
 ## Rules
 - Explain before building. Every module's commit message says what it does and why.
@@ -107,3 +134,7 @@ clinic isolation. It never gives clinical advice.
 - 2026-11-20: Architecture v2 (`docs/ARCHITECTURE.md`) and proposal (`docs/PROPOSAL.md`)
   written against ClinicOS's real auth, tenancy and schema. Gemini docs superseded.
   D1 and D2 accepted by Meher. No code yet.
+- 2026-11-23: D3–D12 accepted (scale + readiness plan folded into ARCHITECTURE §7.4, §14).
+  M0 built: uv/pyproject, FastAPI app factory, settings, psycopg pool, health endpoints,
+  multi-stage Dockerfile (non-root), compose with pgvector 0.8.0, 5 tests. Found and fixed
+  the DB-restart pool bug (FAILURES.md); verified first request after a restart → 200 in 6 ms.

@@ -1,0 +1,38 @@
+# Local development stack. Production does NOT use this file (Cloud Run + Cloud SQL).
+#   docker compose up -d --build     # db + api
+#   docker compose up -d db          # just the database, run the API with `uv run`
+name: medguard
+
+services:
+  db:
+    # Pinned: the pgvector version decides which index features exist (iterative scan
+    # needs >= 0.8). Keep this in step with what Cloud SQL ships.
+    image: pgvector/pgvector:0.8.0-pg16
+    environment:
+      POSTGRES_USER: medguard
+      POSTGRES_PASSWORD: medguard  # local-only credential, never used in the cloud
+      POSTGRES_DB: medguard
+    ports:
+      - "5433:5432"  # 5433 on the host so it can't clash with another local Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medguard -d medguard"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://medguard:medguard@db:5432/medguard
+      ENVIRONMENT: local
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
