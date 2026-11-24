@@ -181,6 +181,13 @@ contract test ─► extract (medguard_reader, per table) ─► transform ─�
   shows "data as of 10:42". Being honest about staleness beats pretending to be live.
 - **Idempotent:** a run that crashes halfway can simply run again. Each run is logged
   to `ops.sync_runs` (rows read/changed/deleted, duration, contract version).
+- **Consistent snapshot:** all ClinicOS tables are read inside **one** `REPEATABLE READ
+  READ ONLY` transaction, so every table reflects the same instant. A bill can never
+  arrive without its visit, even if the receptionist is billing while the sync runs.
+  Loads go parents first (patients → visits → bills → bill_items) in one MedGuard
+  transaction, so the AI never sees half a sync.
+- **New patients:** first seen → pseudonym `PAT-<HMAC>` created + name/phone stored in
+  `identity_vault`. Edits to a patient's name update the vault, not the pseudonym.
 
 ### 5.3 PII: the LLM sees tokens, the doctor sees names
 
@@ -453,3 +460,32 @@ grows alongside.
 | **Operations** | Dashboards, alerts, runbook, cost per clinic per month | Cloud Monitoring + `/v1/metrics` |
 
 Targets are set after the first baseline and published, misses included.
+
+---
+
+## 15. Scaling path: 20 → 100 → 500 → 1,000 clinics
+
+> Knowledge for production and interviews. **Not in the current build plan.** We build for
+> today's scale and know exactly what breaks next, at what size, and how to fix it.
+
+**Load is modest:** ~20 questions per clinic per day, mostly in clinic hours, works out to
+~0.3 req/s at 100 clinics and ~3 req/s (bursts of 5–10) at 1,000. Request volume isn't
+what breaks. These parts are, in this order:
+
+| Order | Part | Strains at | Why | Fix |
+|---|---|---|---|---|
+| 1 | **Sync job** (v1 snapshot + hash diff) | ~50–100 clinics | One busy clinic makes ~150k–200k rows a year, so 1,000 clinics ≈ 200M rows a year. Re-reading everything every 5 min is impossible, and it loads ClinicOS's own DB | Incremental sync on `updated_at` (ClinicOS change C6), then CDC (Postgres logical replication or Datastream) from a ClinicOS replica |
+| 2 | **LLM quota and cost** | ~500 clinics | 3–5 LLM calls and ~5k–7k tokens per question → ~1–2M tokens per minute at peak for 1,000 clinics. Rough cost ~$0.004 per question ≈ ₹200 per clinic per month (to verify against current pricing), against a ₹599 entry plan | Quota increase, then provisioned throughput. Smallest model for routing, answer caching, per-plan daily budgets, MedGuard as a paid add-on |
+| 3 | **DB connections** | ~500 clinics | Cloud Run instances × pool size (40 × 5 = 200) is past what small Cloud SQL tiers allow (~25) | Connection pooler (PgBouncer or Cloud SQL managed pooling) |
+| 4 | **DB size and query speed** | ~1,000 clinics | ~50–100 GB of ops data a year | Indexes on `(clinic_id, date)`, monthly partitioning of large tables, agent queries on a read replica |
+| — | **API servers** | Not a problem | Cloud Run autoscales | Already handled |
+| — | **Document search** | Not a problem | The global corpus doesn't grow with clinics; each query searches only its own clinic's ~2k private chunks (§7.4) | Already handled |
+
+**ClinicOS is never at risk.** MedGuard is a separate system with its own database (§2).
+If MedGuard struggles at scale, the clinic front desk keeps working.
+
+**The interview answer:**
+> "At 20 clinics it runs as designed. The first bottleneck is the sync job at about 100
+> clinics: incremental sync, then change data capture. At 500, LLM quota and connection
+> pooling. At 1,000, a read replica, partitioning and provisioned LLM throughput. Cost is
+> about ₹200 per clinic per month at that scale, which is why there are per-plan budgets."

@@ -32,9 +32,11 @@ future extension, not a claim.
 2. `docs/POSITIONING.md`: one page on what MedGuard is and isn't. Keep every claim
    consistent with it.
 3. `docs/PROPOSAL.md`: the discovery brief and solution proposal (FDE-style).
-4. `docs/INTEGRATION_CONTRACT.md`: *(to be written in M2)* the exact ClinicOS ↔
+4. `docs/THREAT_MODEL.md`: threats, defences, tests and status. Update it in every module.
+5. `docs/MIGRATIONS.md`: migration rules, techniques and the review checklist.
+6. `docs/INTEGRATION_CONTRACT.md`: *(to be written in M2)* the exact ClinicOS ↔
    MedGuard contract.
-5. `Medguard Architecture.md` and `Project Structure.txt`: the original Gemini
+7. `Medguard Architecture.md` and `Project Structure.txt`: the original Gemini
    blueprint. **Superseded and kept for history only.** It assumed a hospital system
    (departments, pre-auth, admissions) that ClinicOS doesn't have.
 
@@ -94,6 +96,14 @@ D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building)
 - **ACCEPTED D11. Split chunk storage for scale:** `global_chunks` (HNSW +
   iterative scan) and `tenant_chunks` (exact search, no vector index), stored as
   `halfvec(768)` with `embedding_model` recorded. See ARCHITECTURE §7.4.
+- **ACCEPTED D13. Tenancy = shared tables + RLS** (2026-11-24). Table-, schema- and
+  database-per-clinic were compared and rejected for now: per-clinic tables still need RLS
+  for owner vs associate, and multiply migrations and onboarding by the clinic count.
+  Future: tiered tenancy (a big customer gets a dedicated DB running the same code).
+- **ACCEPTED D14. Migrations = Alembic with raw SQL** (2026-11-24). Rules and techniques
+  are in `docs/MIGRATIONS.md`. Migrations run as a separate job, never at app startup.
+- **ACCEPTED D15. Threat model is a living doc** (`docs/THREAT_MODEL.md`). Every threat
+  gets a defence, a module and a test; update its status column as modules land.
 - **ACCEPTED D12. Enterprise readiness is measured, not claimed:** ~120–230 official docs
   (~8k–15k pages; 25–40 by Dec 3), 20 simulated clinics, load and chaos tests, a 6-level question ladder, and a published
   scorecard. See ARCHITECTURE §14.
@@ -136,7 +146,8 @@ docker compose up -d --build             # db on :5433, api on :8080
 - Explain before building. Every module's commit message says what it does and why.
 - Never commit secrets. `.env` stays out of git; `.env.example` holds placeholders only.
 - Verify, don't assert: claims of "works" come with a command and its output.
-- Commit per logical change. Never push unless Meher asks.
+- **Meher does all git commits and pushes. Claude never runs `git commit` or `git push`.**
+  Read-only git is fine. At the end of a module, suggest a commit message.
 - Record every failure in `docs/FAILURES.md` (create it with the first module):
   symptom → root cause → fix → lesson.
 
@@ -149,3 +160,7 @@ docker compose up -d --build             # db on :5433, api on :8080
   M0 built: uv/pyproject, FastAPI app factory, settings, psycopg pool, health endpoints,
   multi-stage Dockerfile (non-root), compose with pgvector 0.8.0, 5 tests. Found and fixed
   the DB-restart pool bug (FAILURES.md); verified first request after a restart → 200 in 6 ms.
+- 2026-11-23: Added docs/POSITIONING.md and ARCHITECTURE §15 (scaling path to 1,000 clinics).
+  The scaling section is knowledge only: no build-plan changes (C6 stays "later").
+- 2026-11-24: D13–D15 accepted. Added docs/MIGRATIONS.md and docs/THREAT_MODEL.md (27 threats,
+  10 self-evaluation attacks). ARCHITECTURE §5.2: consistent-snapshot sync + new-patient handling.
