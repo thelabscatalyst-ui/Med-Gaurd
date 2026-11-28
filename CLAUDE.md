@@ -36,9 +36,9 @@ future extension, not a claim.
 5. `docs/MIGRATIONS.md`: migration rules, techniques and the review checklist.
 6. `docs/INTEGRATION_CONTRACT.md`: *(to be written in M2)* the exact ClinicOS ↔
    MedGuard contract.
-7. `Medguard Architecture.md` and `Project Structure.txt`: the original Gemini
-   blueprint. **Superseded and kept for history only.** It assumed a hospital system
-   (departments, pre-auth, admissions) that ClinicOS doesn't have.
+7. `Project Structure.txt`: leftover from the original Gemini blueprint (the blueprint
+   itself was deleted 2026-11-23). **Superseded; history only.** It assumed a hospital
+   system (departments, pre-auth, admissions) that ClinicOS doesn't have.
 
 ## ClinicOS facts that drive the design (verified 2026-11-20)
 - Lives at `/Users/apple/Desktop/ClinicOS`. The brand is now "Med Track" (formerly
@@ -85,7 +85,7 @@ D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building)
 - **ACCEPTED D6. Pseudonymize at sync, re-identify after the answer.** The LLM never
   sees names or phones. Free-text notes are not synced in v1.
 - **ACCEPTED D7. Four-layer SQL guard:** sqlglot AST → read-only transaction with a
-  timeout → `agent_ro` role on `semantic` views → RLS.
+  timeout → `medguard_agent` role on `semantic` views → RLS.
 - **ACCEPTED D8. GCP-native:** Cloud Run, Cloud SQL + pgvector, Vertex AI in
   `asia-south1`, Secret Manager, Cloud Trace. Model IDs come from config and are
   verified at build time. `text-embedding-004` is shut down.
@@ -110,8 +110,9 @@ D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building)
 
 ## Build log (see ARCHITECTURE.md §12 for "done when")
 - [x] M0 Skeleton, config, Docker, local Postgres + pgvector, `/health/live` + `/health/ready`
-      (2026-11-23, awaiting Meher's review; see FAILURES.md for the pool-recovery bug)
-- [ ] M1 MedGuard schemas + RLS + roles (decide the migration tool here)
+      (2026-11-23; see FAILURES.md for the pool-recovery bug)
+- [x] M1 Schemas, roles, RLS, migrations (Alembic), tenant context, 46 attack tests
+      (2026-11-26, awaiting Meher's review; 3 failures logged in FAILURES.md)
 - [ ] M2 Integration contract doc + ClinicOS read-only role
 - [ ] M3 `clinicos-sync` (contract test, pseudonymize, hash-diff)
 - [ ] M4 Semantic views
@@ -129,13 +130,35 @@ D3–D10 accepted 2026-11-23 (Meher read the v2 docs and said to start building)
 - `app/config.py`: the only place env vars are read (pydantic-settings). No `@property`.
 - `app/db/pool.py`: psycopg 3 async pool with a custom `check` (purge-all-on-first-dead)
 - `app/api/health.py`: `/health/live` (no deps) and `/health/ready` (DB + pgvector, 503 when down)
-- `tests/`: unit tests need no Docker; `-m integration` needs `docker compose up -d db`
-- `infra/db/init/`: local-only Docker init SQL. Migrations take over in M1.
+- `app/db/tenant.py`: `TenantContext` + `tenant_transaction()`, the ONLY code that sets
+  the RLS context (`set_config(..., true)` = SET LOCAL; read-only by default)
+- `migrations/` (Alembic, raw SQL): 0001 schemas + hardening · 0002 roles + `medguard.ctx_*()`
+  · 0003 `ops` tables + RLS · 0004 `identity_vault` + RLS. Rules: `docs/MIGRATIONS.md`.
+- `tests/`: unit tests need no Docker; `-m integration` needs `docker compose up -d db` and
+  builds its own throwaway DBs (`medguard_test`, `medguard_migrations_test`) via `tests/pg.py`
+
+**Database security model (M1):**
+- Roles (NOLOGIN until M7/M9 adds credentials; cluster-wide, never dropped by downgrade):
+  `medguard_agent` (AI SQL: SELECT on `ops` via RLS, no `identity_vault`) · `medguard_api`
+  (+ `identity_vault` via RLS) · `medguard_sync` (all rows, policy `sync_all`, no context).
+- Context settings: `app.doctor_id`, `app.clinic_id` (`'solo'` for no clinic, never empty),
+  `app.is_clinic_admin`, `app.can_read_finance`. Missing → error (fail closed).
+- Every `ops`/`identity_vault` table: RLS ENABLED + FORCED + policy, no PUBLIC grants. The
+  meta-test fails the build otherwise. Finance tables (bills, bill_items, expenses) need
+  the PIN flag. No foreign keys (mirror of an external system). Never grant TRUNCATE.
+- Agent has SELECT on `ops` tables (not just views) because M4 views will be
+  `security_invoker`, which checks the caller's table rights. The M7 guard restricts the
+  AI to `semantic.*`.
+- Tests impersonate roles with `SET LOCAL ROLE` from the admin login: faithful for RLS
+  and table rights, NOT for role switching (FAILURES.md).
 ```bash
 uv sync                                  # Python 3.12 venv from uv.lock
+cp .env.example .env                     # once: host commands (alembic, uvicorn) read the DB URL from it
 uv run pytest && uv run pytest -m integration
 uv run ruff check . && uv run ruff format --check .
-docker compose up -d --build             # db on :5433, api on :8080
+uv run alembic upgrade head              # migrate the dev DB (uses MIGRATIONS_DATABASE_URL)
+uv run alembic current                   # which migration the DB is at
+docker compose up -d --build             # db :5433 → migrate job → api :8080
 ```
 - Local DB is on host port **5433**, not 5432. Image pinned to `pgvector/pgvector:0.8.0-pg16`.
 - Dependencies are added with `uv add` only, and only well-known packages. Don't add a
@@ -164,3 +187,9 @@ docker compose up -d --build             # db on :5433, api on :8080
   The scaling section is knowledge only: no build-plan changes (C6 stays "later").
 - 2026-11-24: D13–D15 accepted. Added docs/MIGRATIONS.md and docs/THREAT_MODEL.md (27 threats,
   10 self-evaluation attacks). ARCHITECTURE §5.2: consistent-snapshot sync + new-patient handling.
+- 2026-11-26: M1 built. Alembic (raw SQL, transaction per migration), migrations 0001–0004,
+  three NOLOGIN roles, `medguard.ctx_*` context functions, RLS on 14 tables,
+  `app/db/tenant.py`, compose `migrate` job, init SQL removed. 13 unit + 46 integration
+  tests; sabotage runs (USING true / no FORCE / old finance fn) each caught. FAILURES.md:
+  silent-rollback env.py bug, finance short-circuit, SET ROLE test-harness limit.
+  THREAT_MODEL: 7 ✅, 6 🟡, 14 ⬜.

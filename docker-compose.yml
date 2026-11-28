@@ -16,12 +16,24 @@ services:
       - "5433:5432"  # 5433 on the host so it can't clash with another local Postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U medguard -d medguard"]
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # One-off job: apply migrations, then exit. Same image as the API, different command
+  # (in the cloud this becomes a Cloud Run Job that runs before each deploy).
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://medguard:medguard@db:5432/medguard
+      MIGRATIONS_DATABASE_URL: postgresql://medguard:medguard@db:5432/medguard
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build: .
@@ -33,6 +45,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully  # never serve an un-migrated database
 
 volumes:
   pgdata:

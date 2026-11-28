@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     # MedGuard's OWN database (never ClinicOS's). Required: no default on purpose.
     database_url: PostgresDsn
+    # Admin connection used ONLY by migrations (DDL: tables, roles, policies). The running
+    # app should connect with a least-privilege role instead. Falls back to database_url
+    # locally, where both are the Docker superuser.
+    migrations_database_url: PostgresDsn | None = None
     db_pool_min_size: int = Field(default=1, ge=0)
     db_pool_max_size: int = Field(default=5, ge=1)
     db_connect_timeout_s: int = Field(default=3, ge=1)

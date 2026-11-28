@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "pydantic-settings>=2.6",
     "psycopg[binary,pool]>=3.2",
+    "alembic>=1.20.1",
 ]
 
 [dependency-groups]
@@ -34,4 +35,6 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]  # assert is the point of a test
+# Tests: assert is the point (S101); SQL strings are long literals (E501); table names
+# come from fixed constant lists in the test file itself, never from input (S608).
+"tests/*" = ["S101", "S608", "E501"]

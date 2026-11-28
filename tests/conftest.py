@@ -11,6 +11,20 @@ LOCAL_DB = os.environ.get(
 )
 
 
+@pytest.fixture(scope="session")
+def rls_db() -> str:
+    """A fresh `medguard_test` database: every migration applied, test world seeded.
+
+    Built once per test session, and only when an integration test asks for it.
+    """
+    from tests import pg
+
+    url = pg.recreate_database("medguard_test")
+    pg.alembic(url, "upgrade", "head")
+    pg.seed(url)
+    return url
+
+
 @pytest.fixture
 def make_client(monkeypatch):
     """Build a fresh app against a given database URL, with its lifespan running."""

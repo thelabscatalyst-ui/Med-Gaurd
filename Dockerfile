@@ -22,6 +22,9 @@ RUN useradd --create-home --uid 10001 medguard
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/app ./app
+# Migrations ship in the same image: the migrate job runs `alembic upgrade head`.
+COPY alembic.ini ./
+COPY migrations ./migrations
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PORT=8080

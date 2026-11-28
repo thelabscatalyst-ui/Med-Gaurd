@@ -214,7 +214,7 @@ patient data**, so going live never requires a redesign.
 | Schema | Contents | Who reads it |
 |---|---|---|
 | `ops` | Synced, pseudonymized ClinicOS tables: patients, appointments, visits, bills, bill_items, prescriptions, prescription_items, expenses, feedback (rating only), clinics, doctors (id, specialization), `sync_runs` | Sync job writes; nobody else reads raw |
-| `semantic` | Curated, documented **views** for the SQL agent: `v_appointments`, `v_visits` (with wait-time minutes), `v_bills` (with outstanding = total − paid), `v_prescription_drugs`, `v_expenses`, `v_daily_summary` | SQL agent (role `agent_ro`) |
+| `semantic` | Curated, documented **views** for the SQL agent: `v_appointments`, `v_visits` (with wait-time minutes), `v_bills` (with outstanding = total − paid), `v_prescription_drugs`, `v_expenses`, `v_daily_summary` | SQL agent (role `medguard_agent`) |
 | `knowledge` | `documents`, `global_chunks` + `tenant_chunks` (halfvec + tsvector, see §7.4), corpus versions | Retriever |
 | `identity_vault` | pseudonym → encrypted name/phone | Re-identification step only |
 | `telemetry` | `llm_traces`, `node_spans` | Metrics endpoint, dashboards |
@@ -229,17 +229,28 @@ ClinicOS refactor changes one view, not every prompt.
 ### 6.2 Tenant isolation is enforced by the database
 
 ```sql
+-- As built in M1 (migrations/versions/0003_ops_tables_with_rls.py)
 ALTER TABLE ops.visits ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_scope ON ops.visits USING (
-  doctor_id = current_setting('app.doctor_id')::int
-  AND clinic_id IS NOT DISTINCT FROM nullif(current_setting('app.clinic_id'), '')::int
-  -- owner with clinic:admin: a second policy drops the doctor_id condition
-);
+ALTER TABLE ops.visits FORCE ROW LEVEL SECURITY;          -- applies to the owner too
+CREATE POLICY tenant_read ON ops.visits FOR SELECT TO medguard_agent, medguard_api USING (
+      (clinic_id = (SELECT medguard.ctx_clinic_id())
+       OR (clinic_id IS NULL AND (SELECT medguard.ctx_clinic_id()) IS NULL))   -- 'solo'
+  AND (doctor_id = (SELECT medguard.ctx_doctor_id())
+       OR (SELECT medguard.ctx_is_clinic_admin()))         -- owner sees the whole clinic
+);                                     -- finance tables: AND (SELECT ctx_can_read_finance())
+CREATE POLICY sync_all ON ops.visits FOR ALL TO medguard_sync USING (true) WITH CHECK (true);
 ```
+The `medguard.ctx_*()` functions read the transaction-local settings and **raise** if the
+doctor/clinic context is missing (fail closed). `(SELECT …)` makes Postgres evaluate each
+once per query, not once per row. No write policy exists for the agent or API, so they
+can't write even if a grant slipped in.
 
-Every request opens a transaction, runs `SET LOCAL app.doctor_id/app.clinic_id` from
-the verified token, then runs the agent's SQL as `agent_ro`, which cannot change those
-settings back. Even a prompt-injected `SELECT * FROM v_bills` returns only the
+Every request opens a transaction (`app/db/tenant.py`), sets the context with
+`set_config(name, value, true)` (= SET LOCAL, so it dies with the transaction and can't
+leak to the next pooled request), then runs the agent's SQL as `medguard_agent`.
+**Honest limit:** inside a single transaction, any role can call `set_config` itself.
+The database can't forbid that for custom settings, so the M7 SQL guard bans
+`set_config`/`SET`/`RESET` in AI-written SQL (THREAT_MODEL B3). Even a prompt-injected `SELECT * FROM v_bills` returns only the
 requester's rows. **An automated eval case proves this** (§10).
 
 ---
@@ -349,7 +360,7 @@ private documents) can therefore return **zero rows** even though matches exist.
 1. **Parse** with `sqlglot`: exactly one `SELECT`, only `semantic.*` views, no
    functions on a deny list (`pg_sleep`, `dblink`…), `LIMIT 200` injected.
 2. **Execute** inside a `READ ONLY` transaction with `statement_timeout = 3s`.
-3. **Run** as role `agent_ro` (SELECT on `semantic` only).
+3. **Run** as role `medguard_agent`: SELECT on `ops` (RLS-filtered) and `semantic` views; no `identity_vault`, no writes. The guard (step 1) limits the AI to `semantic.*`.
 4. **RLS** filters to the tenant (§6.2).
 
 Any one layer may fail; all four failing together is what would have to happen to leak data.

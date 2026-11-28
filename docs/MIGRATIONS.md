@@ -1,7 +1,29 @@
 # Database migrations: how MedGuard changes its database safely
 
-> Tool: **Alembic, with raw SQL inside** (decided 2026-11-24). Exact commands are added
-> in M1, when Alembic is set up.
+> Tool: **Alembic, with raw SQL inside** (decided 2026-11-24, set up in M1).
+
+## 0. Commands
+
+```bash
+uv run alembic upgrade head                      # apply everything missing
+uv run alembic current                           # which revision this DB is at
+uv run alembic history                           # the whole book
+uv run alembic downgrade -1                      # undo the latest (local only!)
+uv run alembic revision --rev-id 0005 -m "add semantic views"   # new migration file
+uv run alembic -x db_url=postgresql://… upgrade head            # target another DB
+```
+
+- Files: `migrations/versions/NNNN_slug.py`, raw SQL inside `op.execute()`. No models,
+  no autogenerate: every statement is written and reviewed by hand.
+- `migrations/env.py` connects with `MIGRATIONS_DATABASE_URL` (admin), falling back to
+  `DATABASE_URL` locally. Each migration commits on its own (`transaction_per_migration`).
+- **Never run a statement in `env.py` before Alembic takes over** (it silently disabled all
+  commits once: FAILURES.md 2026-11-26). Session settings go in `connect_args`.
+- Migrations don't import application code: a migration is frozen in time, and app code
+  keeps changing. Constants are copied into each migration file.
+- **Editing an existing migration is allowed only until it is committed**, and only if it
+  has touched nothing but throwaway databases. After that it is frozen (rule 1).
+- Locally, `docker compose up` runs a one-off `migrate` container before the API starts.
 
 ---
 
